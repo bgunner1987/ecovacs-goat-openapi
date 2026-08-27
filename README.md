@@ -4,10 +4,10 @@ Minimal Home Assistant custom integration for an Ecovacs GOAT mower via the Ecov
 
 This version is intentionally conservative:
 
-- Start mowing only (`Clean` / `s` or resume `r`)
+- Start mowing (`Clean` / `s` or resume `r`) and return to base (`Charge` / `go-start`)
 - Working-status polling (`GetWorkState`)
 - One problem binary sensor for dashboard alerts
-- No pause, stop, dock or experimental return-to-base commands exposed
+- No experimental commands; return-to-base uses the documented Open API command
 - No external Python requirements
 - Cloud polling only
 

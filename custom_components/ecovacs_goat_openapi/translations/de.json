@@ -76,6 +76,10 @@
       "name": "Mähen starten",
       "description": "Startet oder reaktiviert den GOAT über Ecovacs Clean/s bzw. Clean/r."
     },
+    "return_to_base": {
+      "name": "Zur Ladestation zurückkehren",
+      "description": "Schickt den GOAT mit Ecovacs Charge/go-start zur Ladestation."
+    },
     "refresh": {
       "name": "Status aktualisieren",
       "description": "Fragt den Arbeitsstatus sofort neu ab."

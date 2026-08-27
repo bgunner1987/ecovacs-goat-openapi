@@ -14,6 +14,22 @@ start_mowing:
       required: false
       example: "Mähmet"
 
+return_to_base:
+  target:
+    device:
+      integration: ecovacs_goat_openapi
+  fields:
+    config_entry_id:
+      selector:
+        text:
+      required: false
+      example: "01H..."
+    nickname:
+      selector:
+        text:
+      required: false
+      example: "Mähmet"
+
 refresh:
   target:
     device:

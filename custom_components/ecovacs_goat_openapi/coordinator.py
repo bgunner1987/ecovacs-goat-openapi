@@ -64,10 +64,16 @@ class EcovacsGoatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             response = await self.api.async_get_work_state(self.nickname)
         except EcovacsGoatApiError as err:
+            if self.data and isinstance(self.data.get("work_state"), dict):
+                _LOGGER.debug(
+                    "Transient Ecovacs GOAT work-state failure for %s (%s); cached state retained",
+                    self.nickname,
+                    type(err).__name__,
+                )
+                return self.data
             raise UpdateFailed(str(err)) from err
 
         work_state = extract_work_state(response)
-        error_info = extract_error_info(response, work_state)
         code = response.get("code", response.get("status"))
         message = response.get("msg", response.get("message"))
         query_variant = response.get("_ha_work_state_query")
@@ -80,17 +86,28 @@ class EcovacsGoatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             override = None
 
         if not any(key in work_state for key in ("cleanSt", "chargeSt", "stationSt")):
-            _LOGGER.warning(
-                "Ecovacs GOAT work-state response for %s did not contain cleanSt/chargeSt/stationSt. "
-                "code=%s message=%s query_variant=%s attempts=%s extracted_work_state=%s raw_response=%s",
-                self.nickname,
-                code,
-                message,
-                query_variant,
-                attempts,
-                work_state,
-                response,
-            )
+            if self.data and isinstance(self.data.get("work_state"), dict):
+                _LOGGER.debug(
+                    "Invalid Ecovacs GOAT work-state for %s: variant=%s code=%s response_type=%s "
+                    "available_keys=%s attempts=%s; cached state retained",
+                    self.nickname,
+                    query_variant,
+                    code,
+                    type(response.get("data")).__name__,
+                    sorted(work_state.keys()),
+                    attempts,
+                )
+                return self.data
+            raise UpdateFailed("Ecovacs GOAT response did not contain a valid work state")
+
+        error_info = extract_error_info(response, work_state)
+        _LOGGER.debug(
+            "Valid Ecovacs GOAT work-state for %s: variant=%s code=%s available_keys=%s",
+            self.nickname,
+            query_variant,
+            code,
+            sorted(key for key in work_state if key in ("cleanSt", "chargeSt", "stationSt")),
+        )
 
         return {
             "work_state": work_state,

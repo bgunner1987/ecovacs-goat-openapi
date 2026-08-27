@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import asyncio
 import json
 import logging
 from typing import Any
@@ -20,6 +21,10 @@ class EcovacsGoatApiError(Exception):
 
 class EcovacsGoatAuthError(EcovacsGoatApiError):
     """Raised when authentication fails."""
+
+
+class EcovacsGoatTransientError(EcovacsGoatApiError):
+    """Raised for a temporary network or upstream-server failure."""
 
 
 @dataclass(frozen=True)
@@ -81,6 +86,7 @@ class EcovacsGoatApiClient:
         self._session = session
         self._api_key = normalize_api_key(api_key)
         self._base_url = normalize_base_url(base_url)
+        self._preferred_work_state_variant: str | None = None
 
     @property
     def base_url(self) -> str:
@@ -124,38 +130,44 @@ class EcovacsGoatApiClient:
         variants are kept because the API has been inconsistent between regions
         and product families. No movement/stop/dock command is sent here.
         """
-        base_payloads: tuple[dict[str, str], ...] = (
-            {"nickName": nickname, "cmd": "GetWorkState", "act": ""},
-            {"nickname": nickname, "cmd": "GetWorkState", "act": ""},
-            {"nickName": "", "cmd": "GetWorkState", "act": ""},
+        variants: tuple[tuple[str, str, dict[str, str]], ...] = (
+            ("post_nickName", "post", {"nickName": nickname, "cmd": "GetWorkState", "act": ""}),
+            ("post_nickname", "post", {"nickname": nickname, "cmd": "GetWorkState", "act": ""}),
+            ("get_nickName", "get", {"nickName": nickname, "cmd": "GetWorkState", "act": ""}),
+            ("get_nickname", "get", {"nickname": nickname, "cmd": "GetWorkState", "act": ""}),
         )
+        if self._preferred_work_state_variant:
+            variants = tuple(
+                sorted(variants, key=lambda item: item[0] != self._preferred_work_state_variant)
+            )
         attempts: list[dict[str, Any]] = []
         last_response: dict[str, Any] | None = None
         last_error: Exception | None = None
 
-        for payload in base_payloads:
-            for method in ("post", "get"):
-                label = f"{method}:{','.join(payload.keys())}:nickname={payload.get('nickName', payload.get('nickname'))!r}"
-                try:
-                    response = await self._request(
-                        ENDPOINT_ROBOT_CTL,
-                        payload,
-                        method=method,
-                        raise_api_error=False,
-                    )
-                    last_response = response
-                    work_state = extract_work_state(response)
-                    attempts.append(_summarize_attempt(label, response, work_state))
-                    if _has_work_state_values(work_state):
-                        response = dict(response)
-                        response["_ha_work_state_query"] = label
-                        response["_ha_work_state_attempts"] = attempts
-                        return response
-                except EcovacsGoatAuthError:
-                    raise
-                except Exception as err:  # noqa: BLE001
-                    last_error = err
-                    attempts.append({"variant": label, "error": str(err)[:240]})
+        for label, method, payload in variants:
+            try:
+                response = await self._request(
+                    ENDPOINT_ROBOT_CTL,
+                    payload,
+                    method=method,
+                    raise_api_error=False,
+                    retry_transient=True,
+                )
+                last_response = response
+                work_state = extract_work_state(response)
+                attempts.append(_summarize_attempt(label, response, work_state))
+                if _has_work_state_values(work_state):
+                    self._preferred_work_state_variant = label
+                    _LOGGER.debug("Ecovacs GOAT work-state variant succeeded: %s", label)
+                    response = dict(response)
+                    response["_ha_work_state_query"] = label
+                    response["_ha_work_state_attempts"] = attempts
+                    return response
+            except EcovacsGoatAuthError:
+                raise
+            except EcovacsGoatApiError as err:
+                last_error = err
+                attempts.append({"variant": label, "error_type": type(err).__name__})
 
         if last_response is not None:
             response = dict(last_response)
@@ -175,6 +187,15 @@ class EcovacsGoatApiClient:
             method="post",
         )
 
+    async def async_return_to_base(self, nickname: str) -> dict[str, Any]:
+        """Ask the mower to return to its charging station."""
+        return await self._request(
+            ENDPOINT_ROBOT_CTL,
+            {"nickName": nickname, "cmd": "Charge", "act": "go-start"},
+            method="post",
+            retry_transient=True,
+        )
+
     async def _request(
         self,
         endpoint: str,
@@ -182,6 +203,7 @@ class EcovacsGoatApiClient:
         method: str,
         *,
         raise_api_error: bool = True,
+        retry_transient: bool = False,
     ) -> dict[str, Any]:
         """Call the API and normalize errors."""
         if not self._api_key:
@@ -191,31 +213,41 @@ class EcovacsGoatApiClient:
         string_payload = {key: str(value) for key, value in payload.items()}
         safe_payload_for_log = {**string_payload, "ak": "***"}
 
-        try:
-            _LOGGER.debug("Calling Ecovacs Open API %s %s payload=%s", method.upper(), url, safe_payload_for_log)
-            if method == "get":
-                async with self._session.get(
-                    url,
-                    params={**string_payload, "ak": self._api_key},
-                    timeout=API_TIMEOUT_SECONDS,
-                ) as response:
-                    data = await self._read_json(response)
-            else:
-                async with self._session.post(
-                    url,
-                    json={**string_payload, "ak": self._api_key},
-                    headers={"Content-Type": "application/json"},
-                    timeout=API_TIMEOUT_SECONDS,
-                ) as response:
-                    data = await self._read_json(response)
-        except ClientResponseError as err:
-            if err.status in (401, 403):
-                raise EcovacsGoatAuthError("Ecovacs Open API hat den API-Key abgelehnt") from err
-            raise EcovacsGoatApiError(f"HTTP-Fehler von Ecovacs Open API: {err.status}") from err
-        except TimeoutError as err:
-            raise EcovacsGoatApiError("Zeitüberschreitung beim Kontakt zur Ecovacs Open API") from err
-        except ClientError as err:
-            raise EcovacsGoatApiError(f"Verbindungsfehler zur Ecovacs Open API: {err}") from err
+        max_attempts = 2 if retry_transient else 1
+        for attempt in range(max_attempts):
+            cause: Exception | None = None
+            try:
+                _LOGGER.debug("Calling Ecovacs Open API %s %s payload=%s", method.upper(), url, safe_payload_for_log)
+                if method == "get":
+                    async with self._session.get(
+                        url, params={**string_payload, "ak": self._api_key}, timeout=API_TIMEOUT_SECONDS
+                    ) as response:
+                        data = await self._read_json(response)
+                else:
+                    async with self._session.post(
+                        url,
+                        json={**string_payload, "ak": self._api_key},
+                        headers={"Content-Type": "application/json"},
+                        timeout=API_TIMEOUT_SECONDS,
+                    ) as response:
+                        data = await self._read_json(response)
+                break
+            except ClientResponseError as err:
+                cause = err
+                if err.status in (401, 403):
+                    raise EcovacsGoatAuthError("Ecovacs Open API hat den API-Key abgelehnt") from err
+                if err.status not in (502, 503, 504):
+                    raise EcovacsGoatApiError(f"HTTP-Fehler von Ecovacs Open API: {err.status}") from err
+                transient = EcovacsGoatTransientError(f"Temporärer HTTP-Fehler: {err.status}")
+            except TimeoutError as err:
+                cause = err
+                transient = EcovacsGoatTransientError("Zeitüberschreitung beim Kontakt zur Ecovacs Open API")
+            except ClientError as err:
+                cause = err
+                transient = EcovacsGoatTransientError("Temporärer Verbindungsfehler zur Ecovacs Open API")
+            if attempt + 1 >= max_attempts:
+                raise transient from cause
+            await asyncio.sleep(0.25 * (attempt + 1))
 
         _LOGGER.debug("Ecovacs Open API response: %s", _redact_api_key(data))
         if raise_api_error:

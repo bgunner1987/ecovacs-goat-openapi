@@ -6,8 +6,10 @@ from typing import Any
 from homeassistant.components.lawn_mower import LawnMowerActivity, LawnMowerEntity, LawnMowerEntityFeature
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
+from .api import EcovacsGoatApiError
 from .const import ATTR_CHARGE_STATE, ATTR_CLEAN_STATE, ATTR_ERROR_REASON, ATTR_STATION_STATE, DOMAIN
 from .coordinator import EcovacsGoatCoordinator
 from .entity import EcovacsGoatEntity
@@ -26,7 +28,7 @@ async def async_setup_entry(
 class EcovacsGoatLawnMower(EcovacsGoatEntity, LawnMowerEntity):
     """Simple GOAT mower entity: start only, no pause/dock exposure."""
 
-    _attr_supported_features = LawnMowerEntityFeature.START_MOWING
+    _attr_supported_features = LawnMowerEntityFeature.START_MOWING | LawnMowerEntityFeature.DOCK
 
     def __init__(self, coordinator: EcovacsGoatCoordinator) -> None:
         """Initialize the mower entity."""
@@ -80,6 +82,14 @@ class EcovacsGoatLawnMower(EcovacsGoatEntity, LawnMowerEntity):
         resume = _as_lower(self._work_state.get("cleanSt")) == "p"
         await self.coordinator.api.async_start_mowing(self._nickname, resume=resume)
         self.coordinator.async_set_local_activity("mowing", seconds=90)
+        await self.coordinator.async_request_refresh()
+
+    async def async_dock(self) -> None:
+        """Send the documented Charge/go-start command."""
+        try:
+            await self.coordinator.api.async_return_to_base(self._nickname)
+        except EcovacsGoatApiError as err:
+            raise HomeAssistantError(f"Ecovacs GOAT konnte nicht zur Station geschickt werden: {err}") from err
         await self.coordinator.async_request_refresh()
 
     @property

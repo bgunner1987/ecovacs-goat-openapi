@@ -6,11 +6,12 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import voluptuous as vol
 
-from .api import EcovacsGoatApiClient, normalize_base_url
+from .api import EcovacsGoatApiClient, EcovacsGoatApiError, normalize_base_url
 from .const import (
     CONF_API_KEY,
     CONF_BASE_URL,
@@ -25,6 +26,7 @@ _LOGGER = logging.getLogger(__name__)
 PLATFORMS: list[Platform] = [Platform.LAWN_MOWER, Platform.BINARY_SENSOR, Platform.SENSOR]
 
 SERVICE_START_MOWING = "start_mowing"
+SERVICE_RETURN_TO_BASE = "return_to_base"
 SERVICE_REFRESH = "refresh"
 
 
@@ -57,7 +59,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN].pop(entry.entry_id, None)
         if not hass.data[DOMAIN]:
             hass.data.pop(DOMAIN)
-            for service in (SERVICE_START_MOWING, SERVICE_REFRESH):
+            for service in (SERVICE_START_MOWING, SERVICE_RETURN_TO_BASE, SERVICE_REFRESH):
                 if hass.services.has_service(DOMAIN, service):
                     hass.services.async_remove(DOMAIN, service)
     return unload_ok
@@ -94,6 +96,25 @@ def _async_register_services(hass: HomeAssistant) -> None:
         _, coordinator, _ = await _get_api_and_coordinator(call)
         await coordinator.async_request_refresh()
 
+    async def async_handle_return_to_base(call: ServiceCall) -> None:
+        api, coordinator, nickname = await _get_api_and_coordinator(call)
+        try:
+            await api.async_return_to_base(nickname)
+        except EcovacsGoatApiError as err:
+            raise HomeAssistantError(f"Ecovacs GOAT konnte nicht zur Station geschickt werden: {err}") from err
+        await coordinator.async_request_refresh()
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_RETURN_TO_BASE,
+        async_handle_return_to_base,
+        schema=vol.Schema(
+            {
+                vol.Optional("config_entry_id"): cv.string,
+                vol.Optional(CONF_NICKNAME): cv.string,
+            }
+        ),
+    )
     hass.services.async_register(
         DOMAIN,
         SERVICE_START_MOWING,
