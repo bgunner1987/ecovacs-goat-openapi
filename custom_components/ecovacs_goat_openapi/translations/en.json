@@ -1,0 +1,84 @@
+{
+  "title": "Ecovacs GOAT Open API",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up Ecovacs GOAT Open API",
+        "description": "Enter your server AK from the Ecovacs Open Platform.",
+        "data": {
+          "api_key": "API key / AK",
+          "base_url": "API host",
+          "scan_interval": "Update interval in seconds"
+        }
+      },
+      "select_device": {
+        "title": "Select GOAT",
+        "data": {
+          "nickname": "Device"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Ecovacs GOAT Open API",
+        "data": {
+          "api_key": "API key / AK",
+          "base_url": "API host",
+          "nickname": "Device nickname",
+          "scan_interval": "Update interval in seconds"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Connection to Ecovacs Open API failed.",
+      "invalid_auth": "API key was rejected by Ecovacs.",
+      "no_devices": "No devices found for this API key.",
+      "device_not_found": "This device was not found for the API key."
+    },
+    "abort": {
+      "already_configured": "This device is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options",
+        "data": {
+          "scan_interval": "Update interval in seconds"
+        }
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "error": {
+        "name": "Error"
+      }
+    },
+    "sensor": {
+      "error_reason": {
+        "name": "Error reason"
+      },
+      "mowing_state": {
+        "name": "Mowing state"
+      },
+      "charging_state": {
+        "name": "Charging state"
+      },
+      "api_status": {
+        "name": "API status"
+      },
+      "raw_work_state": {
+        "name": "Raw work state"
+      }
+    }
+  },
+  "services": {
+    "start_mowing": {
+      "name": "Start mowing",
+      "description": "Starts or resumes the GOAT via Ecovacs Clean/s or Clean/r."
+    },
+    "refresh": {
+      "name": "Refresh status",
+      "description": "Immediately refreshes the working status."
+    }
+  }
+}

@@ -1,0 +1,84 @@
+{
+  "title": "Ecovacs GOAT Open API",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Ecovacs GOAT Open API einrichten",
+        "description": "Trage deinen Server-AK aus der Ecovacs Open Platform ein.",
+        "data": {
+          "api_key": "API-Key / AK",
+          "base_url": "API-Host",
+          "scan_interval": "Aktualisierungsintervall in Sekunden"
+        }
+      },
+      "select_device": {
+        "title": "GOAT auswählen",
+        "data": {
+          "nickname": "Gerät"
+        }
+      },
+      "reconfigure": {
+        "title": "Ecovacs GOAT Open API neu konfigurieren",
+        "data": {
+          "api_key": "API-Key / AK",
+          "base_url": "API-Host",
+          "nickname": "Gerätename / Nickname",
+          "scan_interval": "Aktualisierungsintervall in Sekunden"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbindung zur Ecovacs Open API fehlgeschlagen.",
+      "invalid_auth": "API-Key wurde von Ecovacs abgelehnt.",
+      "no_devices": "Keine Geräte für diesen API-Key gefunden.",
+      "device_not_found": "Dieses Gerät wurde für den API-Key nicht gefunden."
+    },
+    "abort": {
+      "already_configured": "Dieses Gerät ist bereits eingerichtet."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Optionen",
+        "data": {
+          "scan_interval": "Aktualisierungsintervall in Sekunden"
+        }
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "error": {
+        "name": "Fehler"
+      }
+    },
+    "sensor": {
+      "error_reason": {
+        "name": "Fehlergrund"
+      },
+      "mowing_state": {
+        "name": "Mähstatus"
+      },
+      "charging_state": {
+        "name": "Ladestatus"
+      },
+      "api_status": {
+        "name": "API-Status"
+      },
+      "raw_work_state": {
+        "name": "Rohdaten Arbeitsstatus"
+      }
+    }
+  },
+  "services": {
+    "start_mowing": {
+      "name": "Mähen starten",
+      "description": "Startet oder reaktiviert den GOAT über Ecovacs Clean/s bzw. Clean/r."
+    },
+    "refresh": {
+      "name": "Status aktualisieren",
+      "description": "Fragt den Arbeitsstatus sofort neu ab."
+    }
+  }
+}

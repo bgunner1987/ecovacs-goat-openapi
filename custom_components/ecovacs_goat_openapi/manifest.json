@@ -1,0 +1,12 @@
+{
+  "domain": "ecovacs_goat_openapi",
+  "name": "Ecovacs GOAT Open API",
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "https://github.com/bgunner1987/ecovacs-goat-openapi",
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/bgunner1987/ecovacs-goat-openapi/issues",
+  "requirements": [],
+  "version": "0.3.0"
+}
