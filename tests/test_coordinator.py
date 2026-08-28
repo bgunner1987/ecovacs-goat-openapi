@@ -5,7 +5,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from custom_components.ecovacs_goat_openapi.api import EcovacsGoatTransientError
+from homeassistant.exceptions import ConfigEntryAuthFailed
+
+from custom_components.ecovacs_goat_openapi.api import EcovacsGoatAuthError, EcovacsGoatTransientError
 from custom_components.ecovacs_goat_openapi.coordinator import EcovacsGoatCoordinator
 
 
@@ -41,6 +43,17 @@ async def test_timeout_retains_previous_state():
     api = SimpleNamespace(async_get_work_state=_async_error(EcovacsGoatTransientError("timeout")))
     coordinator = coordinator_with(api, previous)
     assert await coordinator._async_update_data() is previous
+
+
+@pytest.mark.asyncio
+async def test_auth_error_does_not_return_cached_state():
+    previous = {"work_state": {"cleanSt": "s", "chargeSt": "i", "stationSt": "i"}}
+    api = SimpleNamespace(async_get_work_state=_async_error(EcovacsGoatAuthError("invalid API key")))
+    coordinator = coordinator_with(api, previous)
+
+    with pytest.raises(ConfigEntryAuthFailed) as error:
+        await coordinator._async_update_data()
+    assert isinstance(error.value.__cause__, EcovacsGoatAuthError)
 
 
 def _async_result(value):

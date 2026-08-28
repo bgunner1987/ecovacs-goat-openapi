@@ -7,9 +7,17 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import EcovacsGoatApiClient, EcovacsGoatApiError, extract_error_info, extract_work_state
+from .api import (
+    EcovacsGoatApiClient,
+    EcovacsGoatApiError,
+    EcovacsGoatAuthError,
+    EcovacsGoatTransientError,
+    extract_error_info,
+    extract_work_state,
+)
 from .const import (
     ATTR_ERROR_DETAILS,
     ATTR_ERROR_REASON,
@@ -63,7 +71,9 @@ class EcovacsGoatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Fetch data from Ecovacs."""
         try:
             response = await self.api.async_get_work_state(self.nickname)
-        except EcovacsGoatApiError as err:
+        except EcovacsGoatAuthError as err:
+            raise ConfigEntryAuthFailed(str(err)) from err
+        except EcovacsGoatTransientError as err:
             if self.data and isinstance(self.data.get("work_state"), dict):
                 _LOGGER.debug(
                     "Transient Ecovacs GOAT work-state failure for %s (%s); cached state retained",
@@ -71,6 +81,8 @@ class EcovacsGoatCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     type(err).__name__,
                 )
                 return self.data
+            raise UpdateFailed(str(err)) from err
+        except EcovacsGoatApiError as err:
             raise UpdateFailed(str(err)) from err
 
         work_state = extract_work_state(response)

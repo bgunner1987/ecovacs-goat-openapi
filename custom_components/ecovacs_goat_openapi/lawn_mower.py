@@ -26,9 +26,11 @@ async def async_setup_entry(
 
 
 class EcovacsGoatLawnMower(EcovacsGoatEntity, LawnMowerEntity):
-    """Simple GOAT mower entity: start only, no pause/dock exposure."""
+    """GOAT mower entity with start, pause, and dock controls."""
 
-    _attr_supported_features = LawnMowerEntityFeature.START_MOWING | LawnMowerEntityFeature.DOCK
+    _attr_supported_features = (
+        LawnMowerEntityFeature.START_MOWING | LawnMowerEntityFeature.PAUSE | LawnMowerEntityFeature.DOCK
+    )
 
     def __init__(self, coordinator: EcovacsGoatCoordinator) -> None:
         """Initialize the mower entity."""
@@ -90,6 +92,15 @@ class EcovacsGoatLawnMower(EcovacsGoatEntity, LawnMowerEntity):
             await self.coordinator.api.async_return_to_base(self._nickname)
         except EcovacsGoatApiError as err:
             raise HomeAssistantError(f"Ecovacs GOAT konnte nicht zur Station geschickt werden: {err}") from err
+        await self.coordinator.async_request_refresh()
+
+    async def async_pause(self) -> None:
+        """Pause mowing and let polling confirm the resulting state."""
+        try:
+            await self.coordinator.api.async_pause_mowing(self._nickname)
+        except EcovacsGoatApiError as err:
+            raise HomeAssistantError(f"Ecovacs GOAT konnte nicht pausiert werden: {err}") from err
+        self.coordinator.async_set_local_activity(None)
         await self.coordinator.async_request_refresh()
 
     @property

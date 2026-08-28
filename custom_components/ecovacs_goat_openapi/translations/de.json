@@ -76,6 +76,10 @@
       "name": "Mähen starten",
       "description": "Startet oder reaktiviert den GOAT über Ecovacs Clean/s bzw. Clean/r."
     },
+    "pause_mowing": {
+      "name": "Mähen pausieren",
+      "description": "Pausiert den GOAT über Ecovacs Clean/p."
+    },
     "return_to_base": {
       "name": "Zur Ladestation zurückkehren",
       "description": "Schickt den GOAT mit Ecovacs Charge/go-start zur Ladestation."

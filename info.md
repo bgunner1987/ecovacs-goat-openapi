@@ -1,1 +1,1 @@
-Minimal Ecovacs GOAT Open API integration: start mowing plus problem/status sensors only.
+Minimal Ecovacs GOAT Open API integration with start, pause, dock, and problem/status sensors.

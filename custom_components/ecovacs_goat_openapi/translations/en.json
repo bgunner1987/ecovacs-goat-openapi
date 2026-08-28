@@ -76,6 +76,10 @@
       "name": "Start mowing",
       "description": "Starts or resumes the GOAT via Ecovacs Clean/s or Clean/r."
     },
+    "pause_mowing": {
+      "name": "Pause mowing",
+      "description": "Pauses the GOAT via Ecovacs Clean/p."
+    },
     "return_to_base": {
       "name": "Return to base",
       "description": "Sends the GOAT to its charging station via Ecovacs Charge/go-start."

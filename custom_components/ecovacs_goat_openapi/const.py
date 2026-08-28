@@ -30,6 +30,7 @@ ATTR_ERROR_DETAILS = "error_details"
 CLEAN_ACTION_START = "s"
 CLEAN_ACTION_RESUME = "r"
 
-# Kept for decoding only; v0.3.0 deliberately does not expose pause/dock/stop.
+# Command constants retained for compatibility and state decoding.
 CLEAN_ACTION_PAUSE = "p"
+# Stop is not exposed by this integration.
 CLEAN_ACTION_STOP = "h"

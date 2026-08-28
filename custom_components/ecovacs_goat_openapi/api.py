@@ -1,8 +1,8 @@
 """Client and payload helpers for the Ecovacs Open API / MCP robot endpoints."""
 from __future__ import annotations
 
-from dataclasses import dataclass
 import asyncio
+from dataclasses import dataclass
 import json
 import logging
 from typing import Any
@@ -140,34 +140,84 @@ class EcovacsGoatApiClient:
             variants = tuple(
                 sorted(variants, key=lambda item: item[0] != self._preferred_work_state_variant)
             )
+        preferred_variant = variants[0][0]
         attempts: list[dict[str, Any]] = []
         last_response: dict[str, Any] | None = None
         last_error: Exception | None = None
 
         for label, method, payload in variants:
-            try:
-                response = await self._request(
-                    ENDPOINT_ROBOT_CTL,
-                    payload,
-                    method=method,
-                    raise_api_error=False,
-                    retry_transient=True,
-                )
-                last_response = response
-                work_state = extract_work_state(response)
-                attempts.append(_summarize_attempt(label, response, work_state))
-                if _has_work_state_values(work_state):
-                    self._preferred_work_state_variant = label
-                    _LOGGER.debug("Ecovacs GOAT work-state variant succeeded: %s", label)
-                    response = dict(response)
-                    response["_ha_work_state_query"] = label
-                    response["_ha_work_state_attempts"] = attempts
-                    return response
-            except EcovacsGoatAuthError:
-                raise
-            except EcovacsGoatApiError as err:
-                last_error = err
-                attempts.append({"variant": label, "error_type": type(err).__name__})
+            max_attempts = 2 if label == preferred_variant else 1
+            for attempt in range(max_attempts):
+                try:
+                    response = await self._request(
+                        ENDPOINT_ROBOT_CTL,
+                        payload,
+                        method=method,
+                        raise_api_error=False,
+                    )
+                    last_response = response
+                    work_state = extract_work_state(response)
+                    summary = _summarize_attempt(label, response, work_state)
+                    summary["attempt"] = attempt + 1
+
+                    if _is_auth_api_error(response):
+                        raise EcovacsGoatAuthError(_api_message(response))
+
+                    if is_transient_api_error(response):
+                        summary["transient"] = True
+                        attempts.append(summary)
+                        if attempt + 1 < max_attempts:
+                            _LOGGER.debug(
+                                "Retrying transient Ecovacs GOAT work-state body error: "
+                                "variant=%s attempt=%s code=%s",
+                                label,
+                                attempt + 1,
+                                summary["code"],
+                            )
+                            await asyncio.sleep(0.25)
+                            continue
+                        break
+
+                    attempts.append(summary)
+                    if _has_work_state_values(work_state):
+                        self._preferred_work_state_variant = label
+                        _LOGGER.debug("Ecovacs GOAT work-state variant succeeded: %s", label)
+                        response = dict(response)
+                        response["_ha_work_state_query"] = label
+                        response["_ha_work_state_attempts"] = attempts
+                        return response
+                    break
+                except EcovacsGoatAuthError:
+                    raise
+                except EcovacsGoatTransientError as err:
+                    last_error = err
+                    attempts.append(
+                        {
+                            "variant": label,
+                            "attempt": attempt + 1,
+                            "error_type": type(err).__name__,
+                            "transient": True,
+                        }
+                    )
+                    if attempt + 1 < max_attempts:
+                        _LOGGER.debug(
+                            "Retrying transient Ecovacs GOAT work-state transport error: "
+                            "variant=%s attempt=%s",
+                            label,
+                            attempt + 1,
+                        )
+                        await asyncio.sleep(0.25)
+                        continue
+                    break
+                except EcovacsGoatApiError as err:
+                    last_error = err
+                    attempts.append(
+                        {"variant": label, "attempt": attempt + 1, "error_type": type(err).__name__}
+                    )
+                    break
+
+        if last_error is not None and not isinstance(last_error, EcovacsGoatTransientError):
+            raise last_error
 
         if last_response is not None:
             response = dict(last_response)
@@ -176,7 +226,7 @@ class EcovacsGoatApiClient:
             return response
 
         if last_error is not None:
-            raise EcovacsGoatApiError(f"GetWorkState fehlgeschlagen: {last_error}") from last_error
+            raise last_error
         raise EcovacsGoatApiError("GetWorkState fehlgeschlagen: keine Antwort")
 
     async def async_start_mowing(self, nickname: str, *, resume: bool = False) -> dict[str, Any]:
@@ -184,6 +234,14 @@ class EcovacsGoatApiClient:
         return await self._request(
             ENDPOINT_ROBOT_CTL,
             {"nickName": nickname, "cmd": "Clean", "act": "r" if resume else "s"},
+            method="post",
+        )
+
+    async def async_pause_mowing(self, nickname: str) -> dict[str, Any]:
+        """Pause mowing via the official Clean command."""
+        return await self._request(
+            ENDPOINT_ROBOT_CTL,
+            {"nickName": nickname, "cmd": "Clean", "act": "p"},
             method="post",
         )
 
@@ -211,13 +269,18 @@ class EcovacsGoatApiClient:
 
         url = f"{self._base_url}/{endpoint.lstrip('/')}"
         string_payload = {key: str(value) for key, value in payload.items()}
-        safe_payload_for_log = {**string_payload, "ak": "***"}
 
         max_attempts = 2 if retry_transient else 1
         for attempt in range(max_attempts):
             cause: Exception | None = None
             try:
-                _LOGGER.debug("Calling Ecovacs Open API %s %s payload=%s", method.upper(), url, safe_payload_for_log)
+                _LOGGER.debug(
+                    "Calling Ecovacs Open API: method=%s endpoint=%s payload_keys=%s attempt=%s",
+                    method.upper(),
+                    endpoint,
+                    sorted(string_payload),
+                    attempt + 1,
+                )
                 if method == "get":
                     async with self._session.get(
                         url, params={**string_payload, "ak": self._api_key}, timeout=API_TIMEOUT_SECONDS
@@ -249,7 +312,14 @@ class EcovacsGoatApiClient:
                 raise transient from cause
             await asyncio.sleep(0.25 * (attempt + 1))
 
-        _LOGGER.debug("Ecovacs Open API response: %s", _redact_api_key(data))
+        work_state = extract_work_state(data)
+        _LOGGER.debug(
+            "Ecovacs Open API response: code=%s data_type=%s data_shape=%s work_state_keys=%s",
+            data.get("code", data.get("status")),
+            type(data.get("data")).__name__,
+            _response_data_shape(data),
+            sorted(key for key in work_state if key in WORK_STATE_CODE_KEYS),
+        )
         if raise_api_error:
             self._raise_for_api_error(data)
         return data
@@ -261,8 +331,11 @@ class EcovacsGoatApiClient:
             data = await response.json(content_type=None)
         except Exception as err:  # noqa: BLE001
             text = await response.text()
-            snippet = text[:300].replace("\n", " ").replace("\r", " ")
-            _LOGGER.debug("Unexpected Ecovacs response from %s: %s", response.url, snippet)
+            _LOGGER.debug(
+                "Unexpected non-JSON Ecovacs response: status=%s response_length=%s",
+                response.status,
+                len(text),
+            )
             raise EcovacsGoatApiError(
                 "Ecovacs Open API hat kein JSON geliefert. Prüfe, ob als Host nur https://open.ecovacs.com eingetragen ist."
             ) from err
@@ -273,29 +346,58 @@ class EcovacsGoatApiClient:
     @staticmethod
     def _raise_for_api_error(data: dict[str, Any]) -> None:
         """Raise an exception if the API response indicates an error."""
-        code = data.get("code") if "code" in data else data.get("status", 0)
-        try:
-            code_int = int(code)
-        except (TypeError, ValueError):
-            code_int = 0
+        code_int = _api_code(data)
         if code_int == 0:
             return
-        message = str(data.get("msg") or data.get("message") or f"API error code {code}")
-        lower = message.lower()
-        if code_int in (401, 403) or any(
-            word in lower for word in ("auth", "key", "permission", "forbidden", "unauthorized", "ak")
-        ):
+        message = _api_message(data)
+        if _is_auth_api_error(data):
             raise EcovacsGoatAuthError(message)
         raise EcovacsGoatApiError(message)
 
 
-def _redact_api_key(value: Any) -> Any:
-    """Return a copy-ish object with API keys redacted for logging."""
-    if isinstance(value, dict):
-        return {k: ("***" if k in {"ak", "api_key"} else _redact_api_key(v)) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_redact_api_key(item) for item in value]
-    return value
+def _api_code(data: dict[str, Any]) -> int:
+    """Return a normalized outer API result code."""
+    code = data.get("code") if "code" in data else data.get("status", 0)
+    try:
+        return int(code)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _api_message(data: dict[str, Any]) -> str:
+    """Return the outer API message without serializing the response."""
+    code = data.get("code", data.get("status"))
+    return str(data.get("msg") or data.get("message") or f"API error code {code}")
+
+
+def _is_auth_api_error(data: dict[str, Any]) -> bool:
+    """Return true for authentication or permission failures."""
+    code = _api_code(data)
+    message = _api_message(data).lower()
+    return code in (401, 403) or any(
+        word in message
+        for word in (
+            "auth",
+            "api key",
+            "api-key",
+            "access key",
+            "permission",
+            "forbidden",
+            "unauthorized",
+            "invalid ak",
+        )
+    )
+
+
+def is_transient_api_error(data: dict[str, Any]) -> bool:
+    """Classify temporary upstream errors reported inside a JSON body."""
+    if _is_auth_api_error(data) or _api_code(data) == 0:
+        return False
+
+    message = _api_message(data).lower()
+    if any(marker in message for marker in ("timeout", "timed out", "socket")):
+        return True
+    return _api_code(data) == -1 and any(status in message for status in ("502", "503", "504"))
 
 
 def _parse_json_if_string(value: Any) -> Any:
@@ -422,20 +524,23 @@ def _has_work_state_values(work_state: dict[str, Any]) -> bool:
 
 def _summarize_attempt(label: str, response: dict[str, Any], work_state: dict[str, Any]) -> dict[str, Any]:
     """Create a compact, non-secret summary for diagnostics."""
-    data = response.get("data")
-    if isinstance(data, dict):
-        data_shape = sorted(str(key) for key in data.keys())[:20]
-    elif isinstance(data, list):
-        data_shape = f"list[{len(data)}]"
-    else:
-        data_shape = type(data).__name__
     return {
         "variant": label,
         "code": response.get("code", response.get("status")),
-        "msg": response.get("msg", response.get("message")),
-        "data_shape": data_shape,
+        "data_type": type(response.get("data")).__name__,
+        "data_shape": _response_data_shape(response),
         "work_state_keys": sorted(work_state.keys())[:20] if isinstance(work_state, dict) else [],
     }
+
+
+def _response_data_shape(response: dict[str, Any]) -> list[str] | str:
+    """Return a compact response-data shape without response values."""
+    data = response.get("data")
+    if isinstance(data, dict):
+        return sorted(str(key) for key in data.keys())[:20]
+    if isinstance(data, list):
+        return f"list[{len(data)}]"
+    return type(data).__name__
 
 
 _ERROR_KEY_WORDS = (
